@@ -9,10 +9,16 @@ exports.handler = async (event) => {
     "Access-Control-Allow-Methods": "POST,OPTIONS"
   };
 
+  // OPTIONS
   if (event.httpMethod === "OPTIONS") {
-    return { statusCode: 204, headers, body: "" };
+    return {
+      statusCode: 204,
+      headers,
+      body: ""
+    };
   }
 
+  // Hanya POST
   if (event.httpMethod !== "POST") {
     return {
       statusCode: 405,
@@ -24,7 +30,9 @@ exports.handler = async (event) => {
     };
   }
 
+  // Supabase configuration
   const url = process.env.SUPABASE_URL;
+
   const key =
     process.env.SUPABASE_SECRET_KEY ||
     process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -40,19 +48,9 @@ exports.handler = async (event) => {
     };
   }
 
-  const action =
-    (event.queryStringParameters || {}).action || "";
-
-  if (action !== "login") {
-    return {
-      statusCode: 404,
-      headers,
-      body: JSON.stringify({
-        ok: false,
-        message: "Endpoint tidak ditemukan."
-      })
-    };
-  }
+  // =====================================================
+  // BACA BODY
+  // =====================================================
 
   let body = {};
 
@@ -69,12 +67,40 @@ exports.handler = async (event) => {
     };
   }
 
+  // =====================================================
+  // ACTION
+  // Mendukung:
+  // body.action
+  // atau ?action=login
+  // =====================================================
+
+  const action =
+    body.action ||
+    (event.queryStringParameters || {}).action ||
+    "";
+
+  if (action !== "login") {
+    return {
+      statusCode: 404,
+      headers,
+      body: JSON.stringify({
+        ok: false,
+        message: "Endpoint tidak ditemukan."
+      })
+    };
+  }
+
+  // =====================================================
+  // DATA LOGIN
+  // =====================================================
+
   const store = String(body.store || "")
     .trim()
     .toUpperCase()
     .replace(/\s+/g, "");
 
   const nik = String(body.nik || "").trim();
+
   const password = String(body.password || "");
 
   if (!store) {
@@ -102,9 +128,11 @@ exports.handler = async (event) => {
   const base = url.replace(/\/$/, "");
 
   try {
+
     // =====================================================
     // 1. CEK KODE TOKO
-    // Kolom yang benar adalah: kode
+    // Tabel: kode_toko
+    // Kolom: kode, nama_toko, aktif
     // =====================================================
 
     const storeEndpoint =
@@ -130,7 +158,11 @@ exports.handler = async (event) => {
       );
     }
 
-    if (!Array.isArray(storeRows) || storeRows.length === 0) {
+    // Kode toko tidak ditemukan
+    if (
+      !Array.isArray(storeRows) ||
+      storeRows.length === 0
+    ) {
       return {
         statusCode: 401,
         headers,
@@ -144,7 +176,8 @@ exports.handler = async (event) => {
     const toko = storeRows[0];
 
     // =====================================================
-    // 2. CEK USER DI naf_users
+    // 2. CEK USER
+    // Tabel: naf_users
     // =====================================================
 
     const userEndpoint =
@@ -170,108 +203,10 @@ exports.handler = async (event) => {
       );
     }
 
-    if (!Array.isArray(userRows) || userRows.length === 0) {
-      return {
-        statusCode: 401,
-        headers,
-        body: JSON.stringify({
-          ok: false,
-          message: "NIK atau password salah."
-        })
-      };
-    }
-
-    const user = userRows[0];
-
-    if (user.active === false) {
-      return {
-        statusCode: 403,
-        headers,
-        body: JSON.stringify({
-          ok: false,
-          message: "User tidak aktif."
-        })
-      };
-    }
-
-    // =====================================================
-    // 3. CEK PASSWORD
-    // Mendukung password_hash SHA-256 maupun password lama
-    // =====================================================
-
-    const storedPassword = String(
-      user.password_hash || ""
-    );
-
-    let passwordValid = false;
-
-    // Password SHA-256
+    // User tidak ditemukan
     if (
-      /^[a-f0-9]{64}$/i.test(storedPassword)
+      !Array.isArray(userRows) ||
+      userRows.length === 0
     ) {
-      const data = new TextEncoder().encode(password);
-      const hashBuffer = await crypto.subtle.digest(
-        "SHA-256",
-        data
-      );
-
-      const hashArray = Array.from(
-        new Uint8Array(hashBuffer)
-      );
-
-      const hash = hashArray
-        .map(b => b.toString(16).padStart(2, "0"))
-        .join("");
-
-      passwordValid =
-        hash.toLowerCase() === storedPassword.toLowerCase();
-
-    } else {
-      // Kompatibilitas password lama
-      passwordValid =
-        storedPassword === password;
-    }
-
-    if (!passwordValid) {
       return {
-        statusCode: 401,
-        headers,
-        body: JSON.stringify({
-          ok: false,
-          message: "NIK atau password salah."
-        })
-      };
-    }
-
-    // =====================================================
-    // 4. LOGIN BERHASIL
-    // =====================================================
-
-    return {
-      statusCode: 200,
-      headers,
-      body: JSON.stringify({
-        ok: true,
-        store: store,
-        namaToko: toko.nama_toko || "",
-        nik: user.nik || nik,
-        nama: user.name || "",
-        role: user.role || "user",
-        countdownMinutes:
-          Number(user.countdown_minutes || 60)
-      })
-    };
-
-  } catch (error) {
-    return {
-      statusCode: 500,
-      headers,
-      body: JSON.stringify({
-        ok: false,
-        message:
-          error?.message ||
-          "Terjadi kesalahan server."
-      })
-    };
-  }
-};
+        statusCode: 401
