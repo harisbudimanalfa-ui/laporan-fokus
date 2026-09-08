@@ -9,7 +9,10 @@ exports.handler = async (event) => {
     "Access-Control-Allow-Methods": "POST,OPTIONS"
   };
 
-  // OPTIONS
+  // =====================================================
+  // OPTIONS / CORS
+  // =====================================================
+
   if (event.httpMethod === "OPTIONS") {
     return {
       statusCode: 204,
@@ -18,7 +21,10 @@ exports.handler = async (event) => {
     };
   }
 
-  // Hanya POST
+  // =====================================================
+  // HANYA MENERIMA POST
+  // =====================================================
+
   if (event.httpMethod !== "POST") {
     return {
       statusCode: 405,
@@ -30,7 +36,10 @@ exports.handler = async (event) => {
     };
   }
 
-  // Supabase configuration
+  // =====================================================
+  // KONFIGURASI SUPABASE
+  // =====================================================
+
   const url = process.env.SUPABASE_URL;
 
   const key =
@@ -49,7 +58,7 @@ exports.handler = async (event) => {
   }
 
   // =====================================================
-  // BACA BODY
+  // BACA BODY JSON
   // =====================================================
 
   let body = {};
@@ -69,9 +78,7 @@ exports.handler = async (event) => {
 
   // =====================================================
   // ACTION
-  // Mendukung:
-  // body.action
-  // atau ?action=login
+  // Bisa dari body.action atau ?action=login
   // =====================================================
 
   const action =
@@ -103,6 +110,10 @@ exports.handler = async (event) => {
 
   const password = String(body.password || "");
 
+  // =====================================================
+  // VALIDASI KODE TOKO
+  // =====================================================
+
   if (!store) {
     return {
       statusCode: 400,
@@ -113,6 +124,10 @@ exports.handler = async (event) => {
       })
     };
   }
+
+  // =====================================================
+  // VALIDASI NIK & PASSWORD
+  // =====================================================
 
   if (!nik || !password) {
     return {
@@ -129,11 +144,18 @@ exports.handler = async (event) => {
 
   try {
 
-    // =====================================================
+    // ===================================================
     // 1. CEK KODE TOKO
-    // Tabel: kode_toko
-    // Kolom: kode, nama_toko, aktif
-    // =====================================================
+    //
+    // Tabel:
+    // public.kode_toko
+    //
+    // Kolom:
+    // id
+    // kode
+    // nama_toko
+    // aktif
+    // ===================================================
 
     const storeEndpoint =
       `${base}/rest/v1/kode_toko` +
@@ -142,14 +164,18 @@ exports.handler = async (event) => {
       `&aktif=eq.true` +
       `&limit=1`;
 
-    const storeResponse = await fetch(storeEndpoint, {
-      headers: {
-        apikey: key,
-        Authorization: `Bearer ${key}`
+    const storeResponse = await fetch(
+      storeEndpoint,
+      {
+        headers: {
+          apikey: key,
+          Authorization: `Bearer ${key}`
+        }
       }
-    });
+    );
 
-    const storeRows = await storeResponse.json();
+    const storeRows =
+      await storeResponse.json();
 
     if (!storeResponse.ok) {
       throw new Error(
@@ -158,7 +184,10 @@ exports.handler = async (event) => {
       );
     }
 
-    // Kode toko tidak ditemukan
+    // ===================================================
+    // KODE TOKO TIDAK DITEMUKAN
+    // ===================================================
+
     if (
       !Array.isArray(storeRows) ||
       storeRows.length === 0
@@ -175,10 +204,21 @@ exports.handler = async (event) => {
 
     const toko = storeRows[0];
 
-    // =====================================================
+    // ===================================================
     // 2. CEK USER
-    // Tabel: naf_users
-    // =====================================================
+    //
+    // Tabel:
+    // public.naf_users
+    //
+    // Kolom yang digunakan:
+    // store
+    // nik
+    // name
+    // password_hash
+    // role
+    // countdown_minutes
+    // active
+    // ===================================================
 
     const userEndpoint =
       `${base}/rest/v1/naf_users` +
@@ -187,14 +227,18 @@ exports.handler = async (event) => {
       `&nik=eq.${encodeURIComponent(nik)}` +
       `&limit=1`;
 
-    const userResponse = await fetch(userEndpoint, {
-      headers: {
-        apikey: key,
-        Authorization: `Bearer ${key}`
+    const userResponse = await fetch(
+      userEndpoint,
+      {
+        headers: {
+          apikey: key,
+          Authorization: `Bearer ${key}`
+        }
       }
-    });
+    );
 
-    const userRows = await userResponse.json();
+    const userRows =
+      await userResponse.json();
 
     if (!userResponse.ok) {
       throw new Error(
@@ -203,10 +247,161 @@ exports.handler = async (event) => {
       );
     }
 
-    // User tidak ditemukan
+    // ===================================================
+    // USER TIDAK DITEMUKAN
+    // ===================================================
+
     if (
       !Array.isArray(userRows) ||
       userRows.length === 0
     ) {
       return {
-        statusCode: 401
+        statusCode: 401,
+        headers,
+        body: JSON.stringify({
+          ok: false,
+          message: "NIK atau password salah."
+        })
+      };
+    }
+
+    const user = userRows[0];
+
+    // ===================================================
+    // 3. CEK STATUS USER
+    // ===================================================
+
+    if (user.active === false) {
+      return {
+        statusCode: 403,
+        headers,
+        body: JSON.stringify({
+          ok: false,
+          message: "User tidak aktif."
+        })
+      };
+    }
+
+    // ===================================================
+    // 4. CEK PASSWORD
+    //
+    // Mendukung:
+    // - SHA-256
+    // - Password lama/plain text
+    // ===================================================
+
+    const storedPassword =
+      String(user.password_hash || "");
+
+    let passwordValid = false;
+
+    // ===================================================
+    // PASSWORD SHA-256
+    // ===================================================
+
+    if (
+      /^[a-f0-9]{64}$/i.test(storedPassword)
+    ) {
+
+      const data =
+        new TextEncoder().encode(password);
+
+      const hashBuffer =
+        await crypto.subtle.digest(
+          "SHA-256",
+          data
+        );
+
+      const hashArray =
+        Array.from(
+          new Uint8Array(hashBuffer)
+        );
+
+      const hash =
+        hashArray
+          .map(
+            b =>
+              b
+                .toString(16)
+                .padStart(2, "0")
+          )
+          .join("");
+
+      passwordValid =
+        hash.toLowerCase() ===
+        storedPassword.toLowerCase();
+
+    } else {
+
+      // =================================================
+      // PASSWORD LAMA
+      // =================================================
+
+      passwordValid =
+        storedPassword === password;
+    }
+
+    // ===================================================
+    // PASSWORD SALAH
+    // ===================================================
+
+    if (!passwordValid) {
+      return {
+        statusCode: 401,
+        headers,
+        body: JSON.stringify({
+          ok: false,
+          message: "NIK atau password salah."
+        })
+      };
+    }
+
+    // ===================================================
+    // 5. LOGIN BERHASIL
+    // ===================================================
+
+    return {
+      statusCode: 200,
+      headers,
+      body: JSON.stringify({
+        ok: true,
+
+        store: store,
+
+        namaToko:
+          toko.nama_toko || "",
+
+        nik:
+          user.nik || nik,
+
+        nama:
+          user.name || "",
+
+        role:
+          user.role || "user",
+
+        countdownMinutes:
+          Number(
+            user.countdown_minutes || 60
+          )
+      })
+    };
+
+  } catch (error) {
+
+    // ===================================================
+    // ERROR SERVER
+    // ===================================================
+
+    return {
+      statusCode: 500,
+      headers,
+      body: JSON.stringify({
+        ok: false,
+        message:
+          error?.message ||
+          "Terjadi kesalahan server."
+      })
+    };
+  }
+};
